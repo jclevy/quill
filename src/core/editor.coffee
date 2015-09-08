@@ -14,7 +14,7 @@ class Editor
 
   constructor: (@root, @quill, @options = {}) ->
     @root.setAttribute('id', @options.id)
-    @doc = new Document(@root, @options)
+    @doc = new Document(@root, @options, @quill)
     @delta = @doc.toDelta()
     @length = @delta.length()
     @selection = new Selection(@doc, @quill)
@@ -122,6 +122,7 @@ class Editor
           @doc.removeLine(curLine)
         else
           curLine.deleteText(offset, deleteLength)
+          @quill?.emit(@quill.constructor.events.LINE_CHANGE, curLine)        
         length -= deleteLength
         curLine = nextLine
         offset = 0
@@ -138,6 +139,7 @@ class Editor
         line.format(name, value) if length > 0
         length -= 1
         offset = 0
+        @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)        
         line = line.next
     )
 
@@ -168,6 +170,9 @@ class Editor
               line.format(format, formatting[format])
             )
             offset = 0
+          else
+            @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)        
+
         line = nextLine
       )
     )

@@ -5,6 +5,7 @@ Format     = require('./format')
 Leaf       = require('./leaf')
 Line       = require('./line')
 LinkedList = require('../lib/linked-list')
+Uuid       = require('../lib/uuid')
 Normalizer = require('./normalizer')
 
 
@@ -13,6 +14,7 @@ class Line extends LinkedList.Node
 
   constructor: (@doc, @node) ->
     @formats = {}
+    @uuid = Uuid()
     this.rebuild()
     super(@node)
 

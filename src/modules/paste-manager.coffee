@@ -17,7 +17,7 @@ class PasteManager
     @options.onConvert ?= this._onConvert;
 
   _onConvert: (container) =>
-    doc = new Document(container, @quill.options)
+    doc = new Document(container, @quill.options, @quill)
     delta = doc.toDelta()
     lengthAdded = delta.length()
     if lengthAdded == 0
@@ -29,6 +29,8 @@ class PasteManager
     oldDocLength = @quill.getLength()
     range = @quill.getSelection()
     return unless range?
+    bounds = @quill.editor.getBounds(range.start)
+    dom(@container).styles(top:Math.round(@quill.container.scrollTop + bounds.top) + 'px')
     @container.focus()
     _.defer( =>
       delta = @options.onConvert(@container)
@@ -38,8 +40,6 @@ class PasteManager
         delta.delete(range.end - range.start)
         @quill.updateContents(delta, 'user')
       @quill.setSelection(range.start + lengthAdded, range.start + lengthAdded)
-      # Make sure bottom of pasted content is visible
-      @quill.editor.selection.scrollIntoView()
       @container.innerHTML = ""
     )
 

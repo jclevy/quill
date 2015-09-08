@@ -8,7 +8,7 @@ Normalizer = require('./normalizer')
 
 
 class Document
-  constructor: (@root, options = {}) ->
+  constructor: (@root, options = {}, @quill) ->
     @normalizer = new Normalizer()
     @formats = {}
     _.each(options.formats, _.bind(this.addFormat, this))
@@ -56,7 +56,8 @@ class Document
       @lines.insertAfter(refLine.prev, line)
     else
       @root.appendChild(newLineNode) unless dom(newLineNode.parentNode).isElement()
-      @lines.append(line)
+      @lines.append(line)      
+    @quill?.emit(@quill.constructor.events.LINE_INSERT, line) unless @quill.modules["paste-manager"]?.container is @root
     return line
 
   mergeLines: (line, lineToMerge) ->
@@ -65,6 +66,7 @@ class Document
       _.each(dom(lineToMerge.node).childNodes(), (child) ->
         line.node.appendChild(child) if child.tagName != dom.DEFAULT_BREAK_TAG
       )
+    @quill?.emit(@quill.constructor.events.LINE_MERGE, line, lineToMerge)
     this.removeLine(lineToMerge)
     line.rebuild()
 
@@ -89,10 +91,12 @@ class Document
         else
           # Existing line removed
           return this.removeLine(line)
+
       if line.outerHTML != lineNode.outerHTML
         # Existing line changed
         line.node = @normalizer.normalizeLine(line.node)
         line.rebuild()
+        @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
       lineNode = dom(lineNode).nextLineNode(@root)
     )
     # New lines appended
@@ -107,7 +111,10 @@ class Document
         dom(line.node.parentNode).remove()
       else
         dom(line.node).remove()
-    @lines.remove(line)
+    lines = @lines.remove(line)
+    @quill?.emit(@quill.constructor.events.LINE_REMOVE, line)
+    return lines
+
 
   setHTML: (html) ->
     html = Normalizer.stripComments(html)
@@ -120,7 +127,8 @@ class Document
     offset = Math.min(offset, line.length - 1)
     [lineNode1, lineNode2] = dom(line.node).split(offset, true)
     line.node = lineNode1
-    line.rebuild()
+    if line.rebuild()
+      @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
     newLine = this.insertLineBefore(lineNode2, line.next)
     newLine.formats = _.clone(line.formats)
     newLine.resetContent()
