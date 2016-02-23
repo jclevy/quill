@@ -13,6 +13,7 @@ class PasteManager
     @container.setAttribute('contenteditable', true)
     @container.setAttribute('tabindex', '-1')
     dom(@quill.root).on('paste', _.bind(this._paste, this))
+    dom(@quill.root).on('copy', _.bind(this._copy, this))
     @options = _.defaults(options, PasteManager.DEFAULTS)
     @options.onConvert ?= this._onConvert;
 
@@ -24,6 +25,12 @@ class PasteManager
       return delta
     # Need to remove trailing newline so paste is inline, losing format is expected and observed in Word
     return delta.compose(new Delta().retain(lengthAdded - 1).delete(1))
+
+  _copy: ->
+    range = this.quill.getSelection()
+    return unless range?
+
+    yes
 
   _paste: ->
     oldDocLength = @quill.getLength()

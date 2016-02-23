@@ -36,6 +36,7 @@ class Quill extends EventEmitter2
     SELECTION_CHANGE : 'selection-change'
     TEXT_CHANGE      : 'text-change'
     LINE_CHANGE      : 'line-change'
+    LINE_LINK        : 'line-link'
     LINE_MERGE       : 'line-merge'
     LINE_INSERT      : 'line-insert'
     LINE_REMOVE      : 'line-remove'

@@ -35,6 +35,7 @@ class Editor
     @root.setAttribute('contenteditable', enabled)
 
   applyDelta: (delta, source) ->
+    delete @doc.lines.forwardUuid
     localDelta = this._update()
     if localDelta
       delta = localDelta.transform(delta, true)
@@ -122,7 +123,7 @@ class Editor
           @doc.removeLine(curLine)
         else
           curLine.deleteText(offset, deleteLength)
-          @quill?.emit(@quill.constructor.events.LINE_CHANGE, curLine)        
+          @quill?.emit(@quill.constructor.events.LINE_CHANGE, curLine)
         length -= deleteLength
         curLine = nextLine
         offset = 0
@@ -139,7 +140,7 @@ class Editor
         line.format(name, value) if length > 0
         length -= 1
         offset = 0
-        @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)        
+        @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
         line = line.next
     )
 
@@ -150,6 +151,7 @@ class Editor
     )
 
   _insertAt: (index, text, formatting = {}) ->
+    uuid = formatting.uuid
     @selection.shiftAfter(index, text.length, =>
       text = text.replace(/\r\n?/g, '\n')
       lineTexts = text.split('\n')
@@ -157,21 +159,31 @@ class Editor
       _.each(lineTexts, (lineText, i) =>
         if !line? or line.length <= offset    # End of document
           if i < lineTexts.length - 1 or lineText.length > 0
-            line = @doc.appendLine(document.createElement(dom.DEFAULT_BLOCK_TAG))
+            line = @doc.appendLine(document.createElement(dom.DEFAULT_BLOCK_TAG), uuid)
             offset = 0
             line.insertText(offset, lineText, formatting)
             line.format(formatting)
             nextLine = null
         else
-          line.insertText(offset, lineText, formatting)
           if i < lineTexts.length - 1       # Are there more lines to insert?
-            nextLine = @doc.splitLine(line, offset + lineText.length)
+            delete formatting.uuid if formatting.uuid?
+            line.insertText(offset, lineText, formatting)
+            formatting.uuid = uuid if uuid?
+            nextLine = @doc.splitLine(line, offset + lineText.length, uuid, offset < (line.length - 1) / 2)
             _.each(_.defaults({}, formatting, line.formats), (value, format) ->
               line.format(format, formatting[format])
             )
             offset = 0
           else
-            @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)        
+            line.insertText(offset, lineText, formatting)
+            if formatting?.uuid?
+              if formatting?.uuid is line.uuid
+                @quill?.emit(@quill.constructor.events.LINE_LINK, line.prev) if line.prev?
+                @quill?.emit(@quill.constructor.events.LINE_LINK, line.next) if line.next?
+                @quill?.emit(@quill.constructor.events.LINE_INSERT, line)
+                @quill?.emit(@quill.constructor.events.LINE_REMOVE, uuid:@doc.lines.forwardUuid) if @doc.lines.forwardUuid?
+            else
+              @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
 
         line = nextLine
       )

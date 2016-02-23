@@ -11,10 +11,11 @@ Normalizer = require('./normalizer')
 
 class Line extends LinkedList.Node
   @DATA_KEY  : 'line'
+  @UUID_KEY : 'data-uuid'
 
-  constructor: (@doc, @node) ->
+  constructor: (@doc, @node, @uuid, initUuid) ->
     @formats = {}
-    @uuid = Uuid()
+    @uuid = Uuid() unless @uuid? or initUuid is false
     this.rebuild()
     super(@node)
 
@@ -119,7 +120,7 @@ class Line extends LinkedList.Node
     [prevNode, nextNode] = dom(leaf.node).split(leafOffset)
     nextNode = dom(nextNode).splitBefore(@node).get() if nextNode
     @node.insertBefore(node, nextNode)
-    this.rebuild()
+    this.rebuild(false, false, formats?.uuid)
 
   insertEmbed: (offset, attributes) ->
     [leaf, leafOffset] = this.findLeafAt(offset)
@@ -145,7 +146,15 @@ class Line extends LinkedList.Node
     Normalizer.optimizeLine(@node)
     this.rebuild()
 
-  rebuild: (force = false) ->
+  rebuild: (force = false, renewUuid = false, uuid) ->
+    if this.uuid is uuid
+      uuid = undefined
+      renewUuid = false
+    renewUuid = true if uuid?
+    if renewUuid
+      @doc.lines.forwardUuid = @uuid if @uuid? and uuid?
+      @uuid = uuid ? Uuid()
+    force = true if renewUuid
     if !force and @outerHTML? and @outerHTML == @node.outerHTML
       if _.all(@leaves.toArray(), (leaf) =>
         return dom(leaf.node).isAncestor(@node)
@@ -169,6 +178,7 @@ class Line extends LinkedList.Node
 
   resetContent: ->
     dom(@node).data(Line.DATA_KEY, this)
+    @node.setAttribute(Line.UUID_KEY, @uuid) if @uuid?
     @outerHTML = @node.outerHTML
     @length = 1
     @delta = new Delta()
@@ -181,6 +191,10 @@ class Line extends LinkedList.Node
         @delta.insert(leaf.text, leaf.formats)
     )
     @delta.insert('\n', @formats)
+    if @delta.ops.length > 0
+      @delta.ops[0].attributes ?= {}
+      @delta.ops[0].attributes.uuid = @uuid
+    @delta
 
 
 module.exports = Line
