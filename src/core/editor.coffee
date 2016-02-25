@@ -181,7 +181,9 @@ class Editor
                 @quill?.emit(@quill.constructor.events.LINE_LINK, line.prev) if line.prev?
                 @quill?.emit(@quill.constructor.events.LINE_LINK, line.next) if line.next?
                 @quill?.emit(@quill.constructor.events.LINE_INSERT, line)
-                @quill?.emit(@quill.constructor.events.LINE_REMOVE, uuid:@doc.lines.forwardUuid) if @doc.lines.forwardUuid?
+                if @doc.lines.forwardUuid? and @doc.lines.forwardUuid isnt line.uuid
+                  @quill?.emit(@quill.constructor.events.LINE_REMOVE, uuid:@doc.lines.forwardUuid)
+                  delete @doc.lines.forwardUuid
             else
               @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
 

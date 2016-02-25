@@ -112,7 +112,7 @@ class Document
           lineNode = dom(lineNode).nextLineNode(@root)
         else
           # Existing line removed
-          if cutOccured
+          if cutOccured and lineChanged?
             removed =
               uuid: lineChanged.uuid
               next: lineChanged
