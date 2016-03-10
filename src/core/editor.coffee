@@ -4,6 +4,7 @@ dom       = require('../lib/dom')
 Document  = require('./document')
 Line      = require('./line')
 Selection = require('./selection')
+Uuid       = require('../lib/uuid')
 
 
 class Editor
@@ -40,30 +41,54 @@ class Editor
     if localDelta
       delta = localDelta.transform(delta, true)
       localDelta = delta.transform(localDelta, false)
-    if delta.ops.length > 0
-      delta = this._trackDelta( =>
-        index = 0
-        _.each(delta.ops, (op) =>
-          if _.isString(op.insert)
-            this._insertAt(index, op.insert, op.attributes)
-            index += op.insert.length;
-          else if _.isNumber(op.insert)
-            this._insertEmbed(index, op.attributes)
-            index += 1;
-          else if _.isNumber(op.delete)
-            this._deleteAt(index, op.delete)
-          else if _.isNumber(op.retain)
-            _.each(op.attributes, (value, name) =>
-              this._formatAt(index, op.retain, name, value)
-            )
-            index += op.retain
+    oneDeletedInline = false
+    if delta.ops.length is 2 and delta.ops[0].retain? and delta.ops[1].delete is 1
+      togo = delta.ops[0].retain
+      for op in @delta.ops
+        op_togo = op.retain ? op.insert.length
+        if op_togo > togo then if op.insert?
+          if op.insert.length > togo + 1
+            op.insert = op.insert.substr(0, togo) + op.insert.substr(togo + 1) ; @length += 1
+            oneDeletedInline = true
+          break
+        else togo += -op_togo
+
+      if oneDeletedInline
+        lines = @doc.lines.toArray()
+        retained = 0
+        for line in lines
+          if retained + line.length > delta.ops[0].retain
+            @selection.shiftAfter(0, -1, -> line.deleteText(delta.ops[0].retain - retained, 1))
+            @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
+            break
+          else retained += line.length
+
+    unless oneDeletedInline
+      if delta.ops.length > 0
+        delta = this._trackDelta( =>
+          index = 0
+          _.each(delta.ops, (op) =>
+            if _.isString(op.insert)
+              this._insertAt(index, op.insert, op.attributes)
+              index += op.insert.length;
+            else if _.isNumber(op.insert)
+              this._insertEmbed(index, op.attributes)
+              index += 1;
+            else if _.isNumber(op.delete)
+              this._deleteAt(index, op.delete)
+            else if _.isNumber(op.retain)
+              _.each(op.attributes, (value, name) =>
+                this._formatAt(index, op.retain, name, value)
+              )
+              index += op.retain
+          )
+          @selection.shiftAfter(0, 0, _.bind(@doc.optimizeLines, @doc))
         )
-        @selection.shiftAfter(0, 0, _.bind(@doc.optimizeLines, @doc))
-      )
-      @delta = @doc.toDelta()
-      @length = @delta.length()
-      @innerHTML = @root.innerHTML
-      @quill.emit(@quill.constructor.events.TEXT_CHANGE, delta, source) if delta and source != Editor.sources.SILENT
+        @delta = @doc.toDelta()
+        @length = @delta.length()
+        
+    @innerHTML = @root.innerHTML
+    @quill.emit(@quill.constructor.events.TEXT_CHANGE, delta, source) if delta and source != Editor.sources.SILENT
     if localDelta and localDelta.ops.length > 0 and source != Editor.sources.SILENT
       @quill.emit(@quill.constructor.events.TEXT_CHANGE, localDelta, Editor.sources.USER)
 
@@ -71,8 +96,15 @@ class Editor
     return clearInterval(@timer) unless @root.parentNode?
     delta = this._update()
     if delta
-      @delta = @delta.compose(delta)
-      @length = @delta.length()
+      if delta.ops.length is 2 and delta.ops[0].retain? and delta.ops[1].insert? and delta.ops[1].insert.length is 1 and delta.ops[1].insert isnt'\n'
+        togo = delta.ops[0].retain
+        for op in @delta.ops
+          op_togo = op.retain ? op.insert.length
+          if op_togo > togo then if op.insert? then op.insert = op.insert.substr(0, togo) + delta.ops[1].insert + op.insert.substr(togo) ; @length += 1 ; break
+          else togo += -op_togo
+      else
+        @delta = @delta.compose(delta)
+        @length = @delta.length()
       @quill.emit(@quill.constructor.events.TEXT_CHANGE, delta, source)
     source = Editor.sources.SILENT if delta
     @selection.update(source)
@@ -164,26 +196,41 @@ class Editor
             line.insertText(offset, lineText, formatting)
             line.format(formatting)
             nextLine = null
+            @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
         else
+          if formatting.uuid? and @doc.lines.uuids[formatting.uuid]?
+            if formatting.uuid isnt line.uuid or lineTexts.length > 1
+              formatting.uuid = uuid = Uuid()
           if i < lineTexts.length - 1       # Are there more lines to insert?
             delete formatting.uuid if formatting.uuid?
             line.insertText(offset, lineText, formatting)
             formatting.uuid = uuid if uuid?
-            nextLine = @doc.splitLine(line, offset + lineText.length, uuid, offset < (line.length - 1) / 2)
+            nextLine = @doc.splitLine(line, offset + lineText.length, uuid, offset < (line.length - lineText.length - 1) / 2)
             _.each(_.defaults({}, formatting, line.formats), (value, format) ->
               line.format(format, formatting[format])
             )
+            @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
             offset = 0
           else
+            doc_forwardUuid = @doc.lines.forwardUuid
             line.insertText(offset, lineText, formatting)
             if formatting?.uuid?
-              if formatting?.uuid is line.uuid
+              if formatting.uuid is line.uuid
+                line_inserted = not @doc.lines.uuids[line.uuid]?
+                new_forwardUuid = @doc.lines.forwardUuid? and @doc.lines.forwardUuid isnt doc_forwardUuid
+                unused_forwardUuid = not new_forwardUuid and @doc.lines.forwardUuid? and @doc.lines.forwardUuid isnt line.uuid
+                @doc.lines.uuids[formatting.uuid] = line
                 @quill?.emit(@quill.constructor.events.LINE_LINK, line.prev) if line.prev?
                 @quill?.emit(@quill.constructor.events.LINE_LINK, line.next) if line.next?
-                @quill?.emit(@quill.constructor.events.LINE_INSERT, line)
-                if @doc.lines.forwardUuid? and @doc.lines.forwardUuid isnt line.uuid
-                  @quill?.emit(@quill.constructor.events.LINE_REMOVE, uuid:@doc.lines.forwardUuid)
-                  delete @doc.lines.forwardUuid
+                @quill?.emit(@quill.constructor.events[if line_inserted then "LINE_INSERT" else "LINE_CHANGE"], line)
+                if line_inserted
+                  if unused_forwardUuid
+                    @quill?.emit(@quill.constructor.events.LINE_REMOVE, uuid:@doc.lines.forwardUuid)
+                    delete @doc.lines.uuids[@doc.lines.forwardUuid]
+                    delete @doc.lines.forwardUuid
+                  else if new_forwardUuid
+                    @quill?.emit(@quill.constructor.events.LINE_REMOVE, uuid:@doc.lines.forwardUuid)
+                    delete @doc.lines.uuids[@doc.lines.forwardUuid]
             else
               @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
 
@@ -191,14 +238,42 @@ class Editor
       )
     )
 
+  _trackDeltaOne: ->
+    delta = null
+    oldIndex = @savedRange?.start
+    @savedRange = @selection.getRange()
+    newIndex = @savedRange?.start
+    if newIndex - oldIndex is 1
+      lines = @doc.lines.toArray()
+      lineNode = @doc.root.firstChild
+      lineNode = lineNode.firstChild if lineNode? and dom.LIST_TAGS[lineNode.tagName]?
+      retained = 0
+      for line in lines
+        if line.outerHTML != lineNode.outerHTML
+          line.node = @doc.normalizer.normalizeLine(line.node)
+          line.rebuild()
+          @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
+          delta = new Delta().retain(newIndex-1)
+          _.each(line.delta.ops, (op) ->
+            delta.push(op)
+          )
+          delta.ops[1].insert = delta.ops[1].insert.substr(newIndex-retained-1, 1)
+          break
+        else
+          retained += line.length
+          lineNode = dom(lineNode).nextLineNode(@doc.root)
+    delta
+
   _trackDelta: (fn) ->
+    delta = this._trackDeltaOne()
+    return delta if delta?
+
     oldIndex = @savedRange?.start
     fn()
-    newDelta = @doc.toDelta()
     @savedRange = @selection.getRange()
     newIndex = @savedRange?.start
     try
-      if oldIndex? and newIndex? and oldIndex <= @delta.length() and newIndex <= newDelta.length()
+      if oldIndex? and newIndex? and oldIndex <= @delta.length() and newIndex <= (newDelta = @doc.toDelta()).length()
         oldRightDelta = @delta.slice(oldIndex)
         newRightDelta = newDelta.slice(newIndex)
         if _.isEqual(oldRightDelta.ops, newRightDelta.ops)
@@ -206,7 +281,7 @@ class Editor
           newLeftDelta = newDelta.slice(0, newIndex)
           return oldLeftDelta.diff(newLeftDelta)
     catch ignored
-    return @delta.diff(newDelta)
+    return @delta.diff(newDelta ? @doc.toDelta())
 
   _update: ->
     return false if @innerHTML == @root.innerHTML

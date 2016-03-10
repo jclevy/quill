@@ -48,8 +48,8 @@ class Document
     # Preserve spaces between tags
     return @root.innerHTML.replace(/\>\s+\</g, '>&nbsp;<')
 
-  insertLineBefore: (newLineNode, refLine, uuid, forwardUuid, formats) ->
-    uuid = Uuid() if forwardUuid is false and uuid? and @lines.uuids[uuid]?
+  insertLineBefore: (newLineNode, refLine, uuid, forwardUuid, lineWasInserted, formats) ->
+    uuid = Uuid() if not (forwardUuid or lineWasInserted) and uuid? and @lines.uuids[uuid]?
     line = new Line(this, newLineNode, uuid, @quill.modules["paste-manager"]?.container isnt @root)
     @lines.uuids[line.uuid] = line if line.uuid?
     if refLine?
@@ -62,7 +62,7 @@ class Document
       line.formats = formats
       line.resetContent()
     unless @quill.modules["paste-manager"]?.container is @root
-      if forwardUuid
+      if forwardUuid and not lineWasInserted
         @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
       else
         @quill?.emit(@quill.constructor.events.LINE_INSERT, line)
@@ -101,8 +101,7 @@ class Document
     lines = @lines.toArray()
     lineNode = @root.firstChild
     lineNode = lineNode.firstChild if lineNode? and dom.LIST_TAGS[lineNode.tagName]?
-    lineChanged = null
-    cutOccured = false
+    swapped = null
     _.each(lines, (line, index) =>
       while line.node != lineNode
         if line.node.parentNode == @root or line.node.parentNode?.parentNode == @root
@@ -112,39 +111,46 @@ class Document
           lineNode = dom(lineNode).nextLineNode(@root)
         else
           # Existing line removed
-          if cutOccured and lineChanged?
-            removed =
-              uuid: lineChanged.uuid
-              next: lineChanged
-
-            lineChanged.uuid = line.uuid
-            lineChanged.next = line.next
-            lineChanged.next.prev = lineChanged if lineChanged.next?
-            lineChanged.rebuild(true)
-            @lines.uuids[lineChanged.uuid] = lineChanged
-            line.uuid = removed.uuid
-            line.prev = lineChanged.prev
-            line.next = removed.next
-            isRemovingLast = @lines.last is line
-            this.removeLine(line)
-            if isRemovingLast and not lineChanged.next?
-              @lines.last = lineChanged
-            lineChanged = undefined
-            return
           this.removeLine(line)
+          while @lines.last?.next? then @lines.last = @lines.last.next # last will be wrong on cutOccured
           return
 
       if line.outerHTML != lineNode.outerHTML
-        cutOccured = true if line.node.outerHTML != line.outerHTML
         # Existing line changed
         line.node = @normalizer.normalizeLine(line.node)
         line.rebuild()
-        lineChanged = line
-      lineNode = dom(lineNode).nextLineNode(@root)
 
+        next_line = line.next
+        last_line = null
+        next_lineNode = dom(lineNode).nextLineNode(@root)
+        while next_line? and next_line?.node isnt next_lineNode
+          last_line = next_line unless next_line.next?
+          next_line = next_line.next
+        if (not next_line? and last_line?) or (next_line? and next_line isnt line.next)
+          swapped =
+            kept:
+              line: line
+              uuid: line.uuid
+              prev: line.prev
+              next: line.next
+            removed:
+              uuid: if next_line? then next_line.prev.uuid else last_line.uuid
+              next: next_line
+        else
+          @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
+
+      lineNode = dom(lineNode).nextLineNode(@root)
     )
-    if lineChanged?
-        @quill?.emit(@quill.constructor.events.LINE_CHANGE, lineChanged)
+
+    if swapped?
+      swapped.kept.line.uuid = swapped.removed.uuid
+      swapped.kept.line.next = swapped.removed.next
+      swapped.kept.line.rebuild(true)
+      @quill?.emit(@quill.constructor.events.LINE_LINK, swapped.kept.line.prev) if swapped.kept.line.prev?
+      @quill?.emit(@quill.constructor.events.LINE_LINK, swapped.kept.line.next) if swapped.kept.line.next?
+      delete @lines.uuids[swapped.kept.uuid]
+      @quill?.emit(@quill.constructor.events.LINE_REMOVE, uuid:swapped.kept.uuid, next:swapped.kept.next, prev:swapped.kept.prev)
+      @quill?.emit(@quill.constructor.events.LINE_INSERT, swapped.kept.line)
 
     # New lines appended
     while lineNode?
@@ -176,35 +182,31 @@ class Document
     this.rebuild()
 
   splitLine: (line, offset, lineNewUuid, forwardUuid = false) ->
-    forwardUuid = true if lineNewUuid?
+    forwardUuid = true if lineNewUuid? and lineNewUuid isnt line.uuid
     offset = Math.min(offset, line.length - 1)
     [lineNode1, lineNode2] = dom(line.node).split(offset, true)
     line.node = lineNode1
     if @lines.forwardUuid? and @lines.forwardUuid isnt line.uuid
       newLineUuid = @lines.forwardUuid
       lineNewUuid = line.uuid
-      lineWasInserted = not @lines.uuids[newLineUuid]?
-      delete @lines.uuids[newLineUuid] unless lineWasInserted
+      newLineWasInserted = not @lines.uuids[newLineUuid]?
+      delete @lines.uuids[newLineUuid] unless newLineWasInserted
       delete @lines.forwardUuid
     else if forwardUuid
       newLineUuid = line.uuid
+      delete @lines.forwardUuid if @lines.forwardUuid is line.uuid
     if line.rebuild(false, forwardUuid, lineNewUuid)
       if forwardUuid
-        line.uuid = Uuid() if @lines.uuids[line.uuid]?
+        line.uuid = Uuid() if @lines.uuids[line.uuid]? unless lineNewUuid?
         @lines.uuids[line.uuid] = line if line.uuid?
       else
         @quill?.emit(@quill.constructor.events.LINE_CHANGE, line)
-    if lineWasInserted
+    if newLineWasInserted
       @quill?.emit(@quill.constructor.events.LINE_LINK, line.prev) if line.prev?
     else if forwardUuid
       @quill?.emit(@quill.constructor.events.LINE_LINK, line.prev) if line.prev?
       @quill?.emit(@quill.constructor.events.LINE_INSERT, line)
-    newLine = this.insertLineBefore(lineNode2, line.next, newLineUuid, forwardUuid or lineWasInserted, _.clone(line.formats))
-    if lineWasInserted
-      @quill?.emit(@quill.constructor.events.LINE_INSERT, newLine)
-    else if forwardUuid
-      @quill?.emit(@quill.constructor.events.LINE_LINK, newLine)
-    return newLine
+    return this.insertLineBefore(lineNode2, line.next, newLineUuid, forwardUuid, newLineWasInserted, _.clone(line.formats))
 
   toDelta: ->
     lines = @lines.toArray()

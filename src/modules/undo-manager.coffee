@@ -54,7 +54,17 @@ class UndoManager
     return unless changeDelta.ops.length > 0
     @stack.redo = []
     try
-      undoDelta = @quill.getContents().diff(@oldDelta)
+      if changeDelta.ops.length is 2 and changeDelta.ops[0].retain? and changeDelta.ops[1].insert? and changeDelta.ops[1].insert.length is 1 and  changeDelta.ops[1].insert isnt '\n'
+        undoDelta = new Delta().retain(changeDelta.ops[0].retain).delete(1)
+      else if changeDelta.ops.length is 2 and changeDelta.ops[0].retain? and changeDelta.ops[1].delete is 1
+        togo = changeDelta.ops[0].retain ; deleted = null
+        for op in oldDelta.ops
+          op_togo = op.retain ? op.insert.length
+          if op_togo > togo then if op.insert? then deleted = op.insert.substr(togo, 1) ; break
+          else togo += -op_togo
+        undoDelta = new Delta().retain(changeDelta.ops[0].retain).insert(deleted)
+      else
+        undoDelta = @quill.getContents().diff(@oldDelta)
       timestamp = new Date().getTime()
       if @lastRecorded + @options.delay > timestamp and @stack.undo.length > 0
         change = @stack.undo.pop()

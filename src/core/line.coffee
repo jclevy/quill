@@ -16,6 +16,7 @@ class Line extends LinkedList.Node
   constructor: (@doc, @node, @uuid, initUuid) ->
     @formats = {}
     @uuid = Uuid() unless @uuid? or initUuid is false
+    delete @doc.lines.forwardUuid if @doc.lines.forwardUuid is @uuid
     this.rebuild()
     super(@node)
 
@@ -152,7 +153,7 @@ class Line extends LinkedList.Node
       renewUuid = false
     renewUuid = true if uuid?
     if renewUuid
-      @doc.lines.forwardUuid = @uuid if @uuid? and uuid?
+      @doc.lines.forwardUuid = @uuid if @uuid? and uuid? and @uuid isnt uuid and @prev?.uuid isnt @uuid
       @uuid = uuid ? Uuid()
     force = true if renewUuid
     if !force and @outerHTML? and @outerHTML == @node.outerHTML
